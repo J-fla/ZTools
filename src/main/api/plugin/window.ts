@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, webContents } from 'electron'
+import { BrowserWindow, ipcMain, session, webContents } from 'electron'
 import type { PluginManager } from '../../managers/pluginManager'
 import pluginWindowManager, { winIpc } from '../../core/pluginWindowManager.js'
 import windowManager from '../../managers/windowManager.js'
@@ -192,6 +192,51 @@ export class PluginWindowAPI {
           }
           return await (win as any)[method](...args)
         }
+      },
+
+      // ── 异步 API：读取插件窗口的 Cookie（含 HttpOnly） ──
+      // 插件端通过 win.webContents.cookies.get(filter) 调用。
+      // 在主进程通过 session.fromPartition(partition).cookies.get() 读取，
+      // 可读取 document.cookie 无法获取的 HttpOnly Cookie（如登录态 sessionid）。
+      pluginWebContentsGetCookies: async (
+        _event: Electron.IpcMainInvokeEvent,
+        { id, filter }: { id: number; filter?: Electron.CookiesGetFilter }
+      ) => {
+        const win = BrowserWindow.fromId(id)
+        if (!win) throw new Error('window not exist')
+
+        // 所有权校验（与 pluginBrowserWindowInvoke 一致）
+        const callerInfo = pluginManager.getPluginInfoByWebContents(_event.sender)
+        const callerPath =
+          callerInfo?.path ?? pluginWindowManager.getPluginPathByWebContentsId(_event.sender.id)
+        const ownerPath = pluginWindowManager.getPluginPathByWindowId(id)
+
+        if (!callerPath || callerPath !== ownerPath) {
+          console.warn(
+            `[pluginWindow:cookies] pluginPath=${callerPath} denied access to winId=${id}`
+          )
+          throw new Error('window id error')
+        }
+
+        // 通过窗口的 session partition 获取 session，再读取 cookie
+        const partition = pluginWindowManager.getSessionPartitionByWindowId(id)
+        if (!partition) {
+          throw new Error('window session not available (window may be destroyed)')
+        }
+
+        const sess = session.fromPartition(partition)
+        // Electron 的 session.cookies.get 可读取 HttpOnly Cookie
+        const cookies = await sess.cookies.get(filter || {})
+        return cookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          secure: c.secure,
+          httpOnly: c.httpOnly,
+          expirationDate: c.expirationDate,
+          sameSite: c.sameSite
+        }))
       }
     })
   }

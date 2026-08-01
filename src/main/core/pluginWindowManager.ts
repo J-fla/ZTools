@@ -324,6 +324,19 @@ class PluginWindowManager {
   }
 
   /**
+   * 根据 win.id 获取窗口所属插件的 session partition 字符串。
+   *
+   * 用于在主进程通过 `session.fromPartition(partition)` 读取该窗口的 cookie，
+   * 可读取 HttpOnly Cookie（document.cookie 读不到的，如登录态 sessionid）。
+   * 若窗口不存在或已销毁，返回 null。
+   */
+  public getSessionPartitionByWindowId(winId: number): string | null {
+    const info = this.windowInfoMap.get(winId)
+    if (!info || info.window.isDestroyed()) return null
+    return info.sessionPartition
+  }
+
+  /**
    * 发送消息到父窗口
    */
   public sendToParent(senderWebContents: Electron.WebContents, channel: string, args: any[]): void {

@@ -622,6 +622,14 @@ window.ztools = {
     })
     delete result.webContents.invokes
 
+    // ── 挂载 WebContents.cookies.get（可读取 HttpOnly Cookie） ──
+    // 通过主进程 session.fromPartition(partition).cookies.get() 实现，
+    // 可读取 document.cookie 无法获取的 HttpOnly Cookie（如登录态 sessionid）。
+    result.webContents.cookies = {
+      get: (filter) =>
+        ipcInvoke('pluginWebContentsGetCookies', { id: winId, filter })
+    }
+
     return result
   },
   // 退出插件
