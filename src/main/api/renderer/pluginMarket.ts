@@ -353,10 +353,19 @@ export class PluginMarketAPI {
     return items.filter((plugin: PluginMarketPlugin) => !!plugin?.name)
   }
 
+  /**
+   * 获取插件评论列表，并可让服务端返回包含指定评论的分页。
+   * @param pluginName 插件唯一名称。
+   * @param page 请求页码。
+   * @param pageSize 每页数量。
+   * @param anchorId 需要定位的评论标识；不定位时传 0。
+   * @returns 评论列表请求结果。
+   */
   public async fetchComments(
     pluginName: string,
     page = 1,
-    pageSize = 20
+    pageSize = 20,
+    anchorId = 0
   ): Promise<{
     success: boolean
     data?: PluginMarketCommentPage
@@ -369,6 +378,7 @@ export class PluginMarketAPI {
         page: String(page),
         pageSize: String(pageSize)
       })
+      if (anchorId > 0) query.set('anchorId', String(anchorId))
       const response = await requestPluginMarket(`/plugins/comments?${query.toString()}`)
       return { success: true, data: this.parseCommentPage(response.data) }
     } catch (error: unknown) {

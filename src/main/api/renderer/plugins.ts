@@ -189,8 +189,8 @@ export class PluginsAPI {
     )
     ipcMain.handle(
       'fetch-plugin-market-comments',
-      (_event, pluginName: string, page?: number, pageSize?: number) =>
-        this.market.fetchComments(pluginName, page, pageSize)
+      (_event, pluginName: string, page?: number, pageSize?: number, anchorId?: number) =>
+        this.market.fetchComments(pluginName, page, pageSize, anchorId)
     )
     ipcMain.handle(
       'create-plugin-market-comment',

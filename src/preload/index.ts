@@ -382,7 +382,9 @@ const api = {
   updater: {
     checkUpdate: () => ipcRenderer.invoke('updater:check-update'),
     showUpdateWindow: () => ipcRenderer.invoke('updater:show-update-window'),
-    startUpdate: () => ipcRenderer.invoke('updater:start-update'),
+    startUpdate: (sourceID?: number) => ipcRenderer.invoke('updater:start-update', sourceID),
+    openDownloadSource: (sourceID: number) =>
+      ipcRenderer.invoke('updater:open-download-source', sourceID),
     installDownloadedUpdate: () => ipcRenderer.invoke('updater:install-downloaded-update'),
     getDownloadStatus: () => ipcRenderer.invoke('updater:get-download-status')
   },

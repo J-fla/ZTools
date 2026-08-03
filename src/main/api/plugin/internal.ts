@@ -23,6 +23,7 @@ import pluginToolsAPI from './tools'
 import databaseAPI from '../shared/database'
 import { analyzeImage } from '../shared/imageAnalysis'
 import updaterAPI from '../updater.js'
+import notificationsAPI from '../renderer/notifications.js'
 import {
   COMMAND_ALIASES_KEY,
   normalizeCommandAliases,
@@ -414,11 +415,11 @@ export class InternalPluginAPI {
 
     ipcMain.handle(
       'internal:fetch-plugin-market-comments',
-      async (event, pluginName: string, page?: number, pageSize?: number) => {
+      async (event, pluginName: string, page?: number, pageSize?: number, anchorId?: number) => {
         if (!requireInternalPlugin(this.pluginManager, event)) {
           throw new PermissionDeniedError('internal:fetch-plugin-market-comments')
         }
-        return await pluginsAPI.market.fetchComments(pluginName, page, pageSize)
+        return await pluginsAPI.market.fetchComments(pluginName, page, pageSize, anchorId)
       }
     )
 
@@ -447,6 +448,44 @@ export class InternalPluginAPI {
         throw new PermissionDeniedError('internal:delete-plugin-market-comment')
       }
       return await pluginsAPI.market.deleteComment(commentId)
+    })
+
+    ipcMain.handle('internal:notification-summary', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:notification-summary')
+      }
+      return await notificationsAPI.summary()
+    })
+
+    ipcMain.handle(
+      'internal:notification-list',
+      async (event, beforeId?: number, limit?: number, unreadOnly?: boolean) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:notification-list')
+        }
+        return await notificationsAPI.list(beforeId, limit, unreadOnly)
+      }
+    )
+
+    ipcMain.handle('internal:notification-mark-read', async (event, id: number) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:notification-mark-read')
+      }
+      return await notificationsAPI.markRead(id)
+    })
+
+    ipcMain.handle('internal:notification-mark-all-read', async (event) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:notification-mark-all-read')
+      }
+      return await notificationsAPI.markAllRead()
+    })
+
+    ipcMain.handle('internal:notification-archive', async (event, id: number) => {
+      if (!requireInternalPlugin(this.pluginManager, event)) {
+        throw new PermissionDeniedError('internal:notification-archive')
+      }
+      return await notificationsAPI.archive(id)
     })
 
     ipcMain.handle('internal:install-plugin-from-market', async (event, plugin: any) => {

@@ -119,7 +119,7 @@ class WindowsPlatformUpdater implements PlatformUpdaterService {
       await shell.openExternal(updateInfo?.releaseUrl || WINDOWS_RELEASE_URL)
       return { success: true }
     }
-    if (this.updater) return this.updater.downloadAndInstall()
+    if (this.updater) return this.updater.downloadAndInstall(updateInfo)
 
     await shell.openExternal(updateInfo?.releaseUrl || WINDOWS_RELEASE_URL)
     return { success: true, migrationRequired: true }

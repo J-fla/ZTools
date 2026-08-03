@@ -22,7 +22,12 @@ import {
   UploadBlobTaskPayload
 } from './syncTaskStore'
 import { ACCOUNT_SYNC_PREFIXES } from '../storage/storageRouting'
-import { coordinateTokenRefresh } from './tokenRefreshCoordinator'
+import {
+  clearInvalidStoredAccessToken,
+  loadStoredSyncConfig,
+  refreshStoredSyncTokens,
+  type StoredSyncConfig
+} from './syncAuthTokenService'
 
 /**
  * WebSocket 同步客户端
@@ -48,6 +53,7 @@ export class SyncClient extends EventEmitter {
   private shouldResetRemoteCheckpoint: boolean = false
   private checkpointId: string = ''
   private checkpointLoadedFromRemote: boolean = false
+  private authReconnectBlocked: boolean = false
 
   // 分批推送状态
   private pushQueue: FullChangeEntry[] = []
@@ -89,7 +95,9 @@ export class SyncClient extends EventEmitter {
   }
 
   /**
-   * 启动同步
+   * 使用给定账号配置启动同步、重试调度和 WebSocket 连接。
+   * @param config 当前账号的同步配置。
+   * @returns 无返回值。
    */
   start(config: SyncConfig): void {
     this.startTraceAt = Date.now()
@@ -100,6 +108,7 @@ export class SyncClient extends EventEmitter {
       serverUrl: config.serverUrl
     })
     this.config = config
+    this.authReconnectBlocked = false
     this.setState('connecting')
     console.log(`[SyncClient][Trace] state connecting +${Date.now() - this.startTraceAt}ms`)
     this.checkAndResetOnAccountSwitch(config.username)
@@ -237,6 +246,10 @@ export class SyncClient extends EventEmitter {
     }
   }
 
+  /**
+   * 创建 WebSocket 连接并注册认证、消息、关闭和错误处理流程。
+   * @returns 无返回值。
+   */
   private connect(): void {
     if (!this.config || !this.config.enabled) return
 
@@ -257,25 +270,15 @@ export class SyncClient extends EventEmitter {
 
     const ws = this.ws
 
-    ws.on('open', async () => {
+    ws.on('open', () => {
       if (this.ws !== ws) return
       console.log('[SyncClient] 连接已建立')
       console.log(`[SyncClient][Trace] websocket open +${Date.now() - this.startTraceAt}ms`)
       this.reconnectDelay = 1000
       this.setState('authenticating')
       console.log(`[SyncClient][Trace] state authenticating +${Date.now() - this.startTraceAt}ms`)
-
-      await this.ensureFreshAccessToken()
-      console.log(`[SyncClient][Trace] token checked +${Date.now() - this.startTraceAt}ms`)
-      if (this.ws !== ws || !this.config) return
-
-      // 发送认证
-      this.send({
-        type: 'auth',
-        token: this.config!.token,
-        deviceId: this.config!.deviceId,
-        deviceName: os.hostname(),
-        protocolVersion: SYNC_PROTOCOL_VERSION
+      void this.authenticateSocket(ws).catch((error) => {
+        this.handleSocketAuthenticationFailure(ws, error)
       })
     })
 
@@ -301,7 +304,7 @@ export class SyncClient extends EventEmitter {
       }
       this.stopHeartbeat()
       this.stopListeningLocalChanges()
-      this.setState('disconnected')
+      this.setState(this.authReconnectBlocked ? 'error' : 'disconnected')
       this.scheduleReconnect()
     })
 
@@ -384,60 +387,148 @@ export class SyncClient extends EventEmitter {
     }
   }
 
-  private async ensureFreshAccessToken(): Promise<void> {
-    if (!this.config?.refreshToken || !isJwtExpiring(this.config.token)) {
-      return
-    }
-    await this.refreshAccessToken()
+  /**
+   * 使用设备级最新凭据完成当前 WebSocket 的认证，避免发送已被其他模块旋转的 token。
+   * @param ws 当前等待认证的 WebSocket 实例。
+   * @returns 认证帧发送完成后的 Promise。
+   * @throws 当凭据失效、账号切换或刷新服务暂时不可用时抛出错误。
+   */
+  private async authenticateSocket(ws: WebSocket): Promise<void> {
+    await this.ensureFreshAccessToken()
+    console.log(`[SyncClient][Trace] token checked +${Date.now() - this.startTraceAt}ms`)
+    if (this.ws !== ws || !this.config) return
+
+    // 仅向仍处于活动状态的连接发送最新认证凭据。
+    ws.send(
+      JSON.stringify({
+        type: 'auth',
+        token: this.config.token,
+        deviceId: this.config.deviceId,
+        deviceName: os.hostname(),
+        protocolVersion: SYNC_PROTOCOL_VERSION
+      } satisfies ClientMessage)
+    )
   }
 
+  /**
+   * 收口 WebSocket 打开后的异步认证异常，并决定是否允许自动重连。
+   * @param ws 发生认证异常的 WebSocket 实例。
+   * @param error 捕获到的认证错误。
+   * @returns 无返回值。
+   */
+  private handleSocketAuthenticationFailure(ws: WebSocket, error: unknown): void {
+    if (this.ws !== ws) return
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[SyncClient] WebSocket 认证失败:', error)
+
+    if (error instanceof SyncCredentialsInvalidError) {
+      // 确认失效后阻断重连，避免持续消耗连接并停留在“认证中”。
+      this.authReconnectBlocked = true
+      if (this.config) {
+        this.config = { ...this.config, enabled: false, token: '', refreshToken: '' }
+      }
+    }
+    this.emit('sync-error', message)
+    this.setState('error')
+    ws.close()
+  }
+
+  /**
+   * 重新加载设备级凭据，并在访问令牌临近过期时刷新。
+   * @returns 凭据准备完成后的 Promise。
+   * @throws 当本地配置已切换账号、凭据失效或刷新暂时失败时抛出错误。
+   */
+  private async ensureFreshAccessToken(): Promise<void> {
+    const latest = await loadStoredSyncConfig()
+    this.applyStoredCredentials(latest)
+    if (!this.config?.token) {
+      throw new SyncCredentialsInvalidError('登录状态已失效，请重新登录')
+    }
+    if (this.config.refreshToken && isJwtExpiring(this.config.token)) {
+      await this.refreshAccessToken()
+    }
+  }
+
+  /**
+   * 在服务端拒绝访问令牌后强制刷新，并使用新凭据重新建立连接。
+   * @returns 刷新和重连调度完成后的 Promise。
+   */
   private async refreshAfterAuthFailure(): Promise<void> {
-    if (!this.config?.refreshToken) return
     try {
+      if (!this.config?.refreshToken) {
+        const rejectedToken = this.config?.token || ''
+        this.authReconnectBlocked = true
+        if (this.config) {
+          this.config = { ...this.config, enabled: false, token: '' }
+        }
+        this.setState('error')
+        if (rejectedToken) {
+          await clearInvalidStoredAccessToken(rejectedToken)
+        }
+        return
+      }
       await this.refreshAccessToken(true)
       this.disconnect(false)
       setImmediate(() => this.connect())
     } catch (err) {
       console.error('[SyncClient] 刷新认证失败:', err)
+      if (err instanceof SyncCredentialsInvalidError) {
+        this.authReconnectBlocked = true
+        this.setState('error')
+      }
     }
   }
 
+  /**
+   * 通过统一刷新服务旋转当前账号 token，并同步更新内存配置。
+   * @param force 是否忽略访问令牌有效期并强制刷新。
+   * @returns 刷新和内存配置更新完成后的 Promise。
+   * @throws 当账号已切换、refresh token 失效或刷新服务暂时不可用时抛出错误。
+   */
   private async refreshAccessToken(force = false): Promise<void> {
+    const latest = await loadStoredSyncConfig()
+    this.applyStoredCredentials(latest)
     if (!this.config?.refreshToken) {
-      throw new Error('Missing refresh token')
+      throw new SyncCredentialsInvalidError('登录状态已失效，请重新登录')
     }
-    if (!force && !isJwtExpiring(this.config.token)) {
+    if (!force && this.config.token && !isJwtExpiring(this.config.token)) {
       return
     }
     const currentRefreshToken = this.config.refreshToken
-    const tokens = await coordinateTokenRefresh(currentRefreshToken, async () => {
-      const response = await fetch(
-        `${syncServerUrlToHttp(this.config!.serverUrl)}/api/auth/refresh`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken: currentRefreshToken })
-        }
-      )
-      const data = await response.json()
-      if (!response.ok || !data?.token || !data?.refreshToken) return null
-      return { token: data.token, refreshToken: data.refreshToken }
-    })
-    if (!tokens) {
-      throw new Error('Refresh token failed')
+    const result = await refreshStoredSyncTokens(currentRefreshToken)
+    if (result.status === 'invalid') {
+      throw new SyncCredentialsInvalidError('登录状态已失效，请重新登录')
     }
-    const nextConfig: SyncConfig = {
+    if (result.status === 'unavailable') {
+      throw new Error('刷新登录状态失败，请稍后重试')
+    }
+    if (!this.applyStoredCredentials(result.config)) {
+      throw new Error('同步账号已切换')
+    }
+    if (!this.config?.token) {
+      throw new SyncCredentialsInvalidError('登录状态已失效，请重新登录')
+    }
+  }
+
+  /**
+   * 将设备级存储中的 token 应用到当前同步会话，并校验账号和服务地址未被切换。
+   * @param storedConfig 设备级存储读取到的最新同步配置。
+   * @returns 存储配置属于当前同步会话并已应用时返回 true。
+   */
+  private applyStoredCredentials(storedConfig: StoredSyncConfig | null): boolean {
+    if (!this.config || !storedConfig) return false
+    if (
+      storedConfig.serverUrl !== this.config.serverUrl ||
+      (storedConfig.username || '') !== (this.config.username || '')
+    ) {
+      return false
+    }
+    this.config = {
       ...this.config,
-      token: tokens.token,
-      refreshToken: tokens.refreshToken
+      token: storedConfig.token || '',
+      refreshToken: storedConfig.refreshToken || ''
     }
-    this.config = nextConfig
-    const existingDoc = await (this.db as any).promises.get('SYNC/config')
-    await (this.db as any).promises.put({
-      _id: 'SYNC/config',
-      _rev: existingDoc?._rev,
-      data: nextConfig
-    })
+    return true
   }
 
   // ==================== 阶段一：拉取 ====================
@@ -1254,8 +1345,12 @@ export class SyncClient extends EventEmitter {
     }
   }
 
+  /**
+   * 在同步仍启用且认证未被阻断时按指数退避调度重连。
+   * @returns 无返回值。
+   */
   private scheduleReconnect(): void {
-    if (!this.config?.enabled) return
+    if (!this.config?.enabled || this.authReconnectBlocked) return
 
     this.reconnectTimer = setTimeout(() => {
       console.log(`[SyncClient] 重连中 (delay: ${this.reconnectDelay}ms)`)
@@ -1313,6 +1408,24 @@ export class SyncClient extends EventEmitter {
   }
 }
 
+class SyncCredentialsInvalidError extends Error {
+  /**
+   * 创建一个可阻断自动重连的凭据失效错误。
+   * @param message 展示给同步状态界面的错误消息。
+   * @returns 初始化后的凭据失效错误实例。
+   */
+  constructor(message: string) {
+    super(message)
+    this.name = 'SyncCredentialsInvalidError'
+  }
+}
+
+/**
+ * 判断 JWT 是否已经过期或将在给定提前量内过期。
+ * @param token 待检查的 JWT 字符串。
+ * @param skewMs 提前判定为过期的毫秒数。
+ * @returns token 无法解析、缺少过期时间或即将过期时返回 true。
+ */
 function isJwtExpiring(token: string, skewMs = 60000): boolean {
   try {
     const parts = token.split('.')
@@ -1324,8 +1437,4 @@ function isJwtExpiring(token: string, skewMs = 60000): boolean {
   } catch {
     return true
   }
-}
-
-function syncServerUrlToHttp(serverUrl: string): string {
-  return serverUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://')
 }

@@ -10,7 +10,10 @@ import pluginDeviceAPI from '../plugin/device'
 import { defaultAccountImportService } from '../../core/storage/defaultAccountImportService'
 import activityHeartbeatService from '../../core/activity/heartbeatService'
 import { cacheUserProfile } from '../../core/account/userProfileStore'
-import { coordinateTokenRefresh } from '../../core/sync/tokenRefreshCoordinator'
+import {
+  onSyncCredentialsInvalidated,
+  refreshStoredSyncTokens
+} from '../../core/sync/syncAuthTokenService'
 import type { PluginManager } from '../../managers/pluginManager'
 
 /**
@@ -22,7 +25,14 @@ export class SyncAPI {
   private lastSyncTimeSave: Promise<void> = Promise.resolve()
   private lastPersistedSyncTime = 0
   private statusNotifyTimer: ReturnType<typeof setTimeout> | null = null
+  private stopCredentialsInvalidatedListener: (() => void) | null = null
 
+  /**
+   * 初始化同步客户端、IPC 和账号凭据状态监听。
+   * @param mainWindow 主窗口实例；当前同步通知直接发送到设置插件。
+   * @param pluginManager 插件管理器，用于向设置插件发送状态更新。
+   * @returns 无返回值。
+   */
   public init(mainWindow?: BrowserWindow, pluginManager?: PluginManager): void {
     void mainWindow
     this.pluginManager = pluginManager || null
@@ -30,10 +40,28 @@ export class SyncAPI {
     this.setupIPC()
     this.registerStorageSwitchListener()
     this.registerLocalChangeListener()
+    this.registerCredentialsInvalidatedListener()
 
     // 自动启动同步
     this.autoStart().catch((error) => {
       console.error('[Sync API] 自动启动失败:', error)
+    })
+  }
+
+  /**
+   * 监听统一刷新服务确认的登录失效，并停止同步及通知设置界面清理旧登录态。
+   * @returns 无返回值。
+   */
+  private registerCredentialsInvalidatedListener(): void {
+    this.stopCredentialsInvalidatedListener?.()
+    this.stopCredentialsInvalidatedListener = onSyncCredentialsInvalidated(() => {
+      this.syncClient?.stop()
+      this.sendToSettingPlugin('sync:status-changed', {
+        state: 'error',
+        lastError: '登录状态已失效，请重新登录',
+        credentialsInvalidated: true,
+        refresh: true
+      })
     })
   }
 
@@ -731,30 +759,23 @@ export class SyncAPI {
     return serverUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://')
   }
 
+  /**
+   * 通过统一设备级服务刷新账号凭据，并拒绝复用刷新期间切换到的其他账号。
+   * @param config 发起请求时使用的同步配置。
+   * @returns 同一账号的最新完整配置；刷新失败、凭据失效或账号切换时返回 null。
+   */
   private async refreshToken(config: SyncConfig): Promise<SyncConfig | null> {
     if (!config.refreshToken) return null
-    const tokens = await coordinateTokenRefresh(config.refreshToken, async () => {
-      const response = await fetch(
-        `${this.syncServerUrlToHttp(config.serverUrl)}/api/auth/refresh`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken: config.refreshToken })
-        }
-      )
-      const data = await response.json()
-      if (!response.ok || !data?.token || !data?.refreshToken) return null
-      return { token: data.token, refreshToken: data.refreshToken }
-    })
-    if (!tokens) return null
-    const nextConfig = { ...config, token: tokens.token, refreshToken: tokens.refreshToken }
-    const existingDoc = await lmdbInstance.promises.get('SYNC/config')
-    await lmdbInstance.promises.put({
-      _id: 'SYNC/config',
-      _rev: existingDoc?._rev,
-      data: nextConfig
-    })
-    return nextConfig
+    const result = await refreshStoredSyncTokens(config.refreshToken)
+    if (result.status !== 'refreshed' && result.status !== 'reused') return null
+    if (
+      !result.config.token ||
+      result.config.serverUrl !== config.serverUrl ||
+      (result.config.username || '') !== (config.username || '')
+    ) {
+      return null
+    }
+    return { ...config, ...result.config } as SyncConfig
   }
 }
 

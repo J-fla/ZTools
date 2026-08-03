@@ -1,4 +1,4 @@
-# 3.0.2-beta.5
+# 3.0.2
 
 ## 新功能 (Feat)
 
@@ -13,6 +13,9 @@
 - 本地启动项支持设置别名和快捷键（PR [#609](../../pull/609)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
 - `ScreenCapture.start` 新增 `autoConfirm` 自动确认模式，兼容原有调用方式，并补充截图结果类型（PR [#608](../../pull/608)，感谢 [@Particaly](https://github.com/Particaly) 的贡献 🎉）
 - `ztools.createBrowserWindow` 支持在相对页面地址中携带 query 和 hash 参数（PR [#613](../../pull/613)，感谢 [@xiaou66](https://github.com/xiaou66) 的贡献 🎉）
+- 软件更新支持网盘下载源
+- 新增消息中心，可接收评论回复
+- 正式版支持检查beta版本
 
 ## 修复 (Fix)
 

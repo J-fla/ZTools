@@ -97,7 +97,7 @@ class MacPlatformUpdater implements PlatformUpdaterService {
    * @returns 更新启动结果。
    */
   public async startUpdate(updateInfo?: PlatformUpdateInfo): Promise<PlatformUpdateActionResult> {
-    if (this.updater) return this.updater.downloadAndInstall()
+    if (this.updater) return this.updater.downloadAndInstall(updateInfo)
 
     await shell.openExternal(updateInfo?.releaseUrl || MAC_RELEASE_URL)
     return { success: true, migrationRequired: true }

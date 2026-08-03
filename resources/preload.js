@@ -961,12 +961,13 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:fetch-plugin-market'),
     fetchPluginMarketRecommendations: async (limit) =>
       await electron.ipcRenderer.invoke('internal:fetch-plugin-market-recommendations', limit),
-    fetchPluginMarketComments: async (pluginName, page, pageSize) =>
+    fetchPluginMarketComments: async (pluginName, page, pageSize, anchorId) =>
       await electron.ipcRenderer.invoke(
         'internal:fetch-plugin-market-comments',
         pluginName,
         page,
-        pageSize
+        pageSize,
+        anchorId
       ),
     createPluginMarketComment: async (input) =>
       await electron.ipcRenderer.invoke('internal:create-plugin-market-comment', input),
@@ -974,6 +975,16 @@ window.ztools = {
       await electron.ipcRenderer.invoke('internal:toggle-plugin-market-comment-like', commentId),
     deletePluginMarketComment: async (commentId) =>
       await electron.ipcRenderer.invoke('internal:delete-plugin-market-comment', commentId),
+    notificationSummary: async () =>
+      await electron.ipcRenderer.invoke('internal:notification-summary'),
+    notificationList: async (beforeId, limit, unreadOnly) =>
+      await electron.ipcRenderer.invoke('internal:notification-list', beforeId, limit, unreadOnly),
+    notificationMarkRead: async (id) =>
+      await electron.ipcRenderer.invoke('internal:notification-mark-read', id),
+    notificationMarkAllRead: async () =>
+      await electron.ipcRenderer.invoke('internal:notification-mark-all-read'),
+    notificationArchive: async (id) =>
+      await electron.ipcRenderer.invoke('internal:notification-archive', id),
     installPluginFromMarket: async (plugin) =>
       await electron.ipcRenderer.invoke('internal:install-plugin-from-market', plugin),
     cancelPluginMarketDownload: async (pluginNameOrTaskId) =>

@@ -5,6 +5,7 @@ import log from 'electron-log'
 import path from 'path'
 import lmdbInstance from './core/lmdb/lmdbInstance'
 import api from './api/index'
+import updaterAPI from './api/updater'
 import appsAPI from './api/renderer/commands'
 import pluginsAPI from './api/renderer/plugins'
 import appWatcher from './appWatcher'
@@ -146,6 +147,7 @@ app.whenReady().then(async () => {
   // 初始化 API 和插件管理器
   if (mainWindow) {
     api.init(mainWindow, pluginManager)
+    activityHeartbeatService.setUpdateHandler((update) => updaterAPI.handleHeartbeatUpdate(update))
     pluginManager.init(mainWindow)
     // 首次应用列表准备完成后再初始化应用目录监听器，避免启动时与应用扫描抢占磁盘 I/O
     appsAPI.setAfterFirstAppsReadyCallback(() => {

@@ -26,6 +26,7 @@ import {
 describe('requestPluginMarket', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockPut.mockResolvedValue({ ok: true, id: 'SYNC/config', rev: '2-test' })
     mockGet.mockResolvedValue({
       _id: 'SYNC/config',
       _rev: '1-test',
@@ -87,6 +88,7 @@ describe('requestPluginMarket', () => {
     }
     mockGet
       .mockReset()
+      .mockResolvedValueOnce(oldConfig)
       .mockResolvedValueOnce(oldConfig)
       .mockResolvedValueOnce(oldConfig)
       .mockResolvedValueOnce(oldConfig)

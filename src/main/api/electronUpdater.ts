@@ -199,10 +199,21 @@ export class ElectronUpdaterService {
   }
 
   /**
-   * 下载当前更新并在下载完成后启动平台安装流程。
+   * 根据可选服务端 feed 下载当前更新，并在完成后启动平台安装流程。
+   * @param updateInfo 心跳发现的目标版本及服务端 feed 地址。
    * @returns 下载和安装启动结果。
    */
-  public async downloadAndInstall(): Promise<PlatformUpdateActionResult> {
+  public async downloadAndInstall(
+    updateInfo?: PlatformUpdateInfo
+  ): Promise<PlatformUpdateActionResult> {
+    if (updateInfo?.feedUrl) {
+      // 服务端 feed 只提供元数据，实际安装包仍由 GitHub Release 下载。
+      autoUpdater.setFeedURL({ provider: 'generic', url: updateInfo.feedUrl })
+      const checkResult = await this.checkForUpdates(false)
+      if (!checkResult.hasUpdate || checkResult.latestVersion !== updateInfo.version) {
+        return { success: false, error: '更新元数据与当前版本不一致' }
+      }
+    }
     const downloadResult = await this.downloadUpdate(false)
     if (!downloadResult.success) return downloadResult
     return this.installDownloadedUpdate()

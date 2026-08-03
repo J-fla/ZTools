@@ -1,21 +1,14 @@
 import lmdbInstance from '../../core/lmdb/lmdbInstance'
-import { coordinateTokenRefresh } from '../../core/sync/tokenRefreshCoordinator'
+import {
+  loadStoredSyncConfig,
+  refreshStoredSyncTokens,
+  type StoredSyncConfig
+} from '../../core/sync/syncAuthTokenService'
 import type { HttpRequestOptions, HttpResponse } from '../../utils/httpRequest'
 import { httpRequest } from '../../utils/httpRequest.js'
 
 export const DEFAULT_PLUGIN_MARKET_API_BASE = 'https://z-tools.top/api/market'
 export const DEFAULT_SYNC_SERVER_URL = 'wss://z-tools.top'
-
-type StoredSyncConfig = {
-  enabled?: boolean
-  serverUrl?: string
-  token?: string
-  refreshToken?: string
-  syncInterval?: number
-  lastSyncTime?: number
-  deviceId?: string
-  username?: string
-}
 
 export class PluginMarketAuthRequiredError extends Error {
   constructor(message = '需要登录后操作') {
@@ -136,37 +129,29 @@ async function requestPluginMarketOnce(
   })
 }
 
+/**
+ * 通过统一设备级刷新服务更新插件市场使用的官方账号 token。
+ * @param marketApiBase 插件市场 API 地址；保留参数以兼容现有调用边界。
+ * @returns 获得可用访问令牌时返回 true。
+ */
 async function refreshPluginMarketToken(marketApiBase: string): Promise<boolean> {
+  void marketApiBase
   const config = await getStoredSyncConfig()
   if (!config?.refreshToken || config.serverUrl !== DEFAULT_SYNC_SERVER_URL) {
     return false
   }
-  const tokens = await coordinateTokenRefresh(config.refreshToken, async () => {
-    const endpoint = `${new URL(marketApiBase).origin}/api/auth/refresh`
-    const response = await httpRequest(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: config.refreshToken }),
-      validateStatus: (status) => status >= 200 && status < 500
-    })
-    if (response.status !== 200) return null
-    const data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
-    if (!data?.token || !data?.refreshToken) return null
-    return { token: data.token, refreshToken: data.refreshToken }
-  })
-  if (!tokens) return false
-  await savePluginMarketTokens({
-    serverUrl: config.serverUrl,
-    token: tokens.token,
-    refreshToken: tokens.refreshToken,
-    username: config.username
-  })
-  return true
+  const result = await refreshStoredSyncTokens(config.refreshToken)
+  return (
+    (result.status === 'refreshed' || result.status === 'reused') && Boolean(result.config.token)
+  )
 }
 
+/**
+ * 读取插件市场认证使用的设备级同步配置。
+ * @returns 当前同步配置；读取失败或未配置时返回 null。
+ */
 async function getStoredSyncConfig(): Promise<StoredSyncConfig | null> {
-  const doc = await lmdbInstance.promises.get('SYNC/config')
-  return doc?.data || null
+  return loadStoredSyncConfig()
 }
 
 function assertOK(response: HttpResponse): void {

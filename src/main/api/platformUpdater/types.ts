@@ -8,6 +8,16 @@ export interface PlatformUpdateInfo {
   manualDownloadRequired?: boolean
   migrationRequired?: boolean
   releaseUrl?: string
+  feedUrl?: string
+  sources?: UpdateDownloadSource[]
+}
+
+export interface UpdateDownloadSource {
+  id: number
+  platformName: string
+  downloadUrl: string
+  isDirect: boolean
+  feedUrl?: string
 }
 
 export interface PlatformUpdateResult {

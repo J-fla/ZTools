@@ -141,7 +141,8 @@ declare global {
         fetchPluginMarketComments: (
           pluginName: string,
           page?: number,
-          pageSize?: number
+          pageSize?: number,
+          anchorId?: number
         ) => Promise<{
           success: boolean
           data?: {
@@ -193,6 +194,47 @@ declare global {
           error?: string
           authRequired?: boolean
         }>
+        notificationSummary: () => Promise<{
+          success: boolean
+          data?: { unreadCount: number; latestId: number; hasMoreUnread: boolean }
+          error?: string
+        }>
+        notificationList: (
+          beforeId?: number,
+          limit?: number,
+          unreadOnly?: boolean
+        ) => Promise<{
+          success: boolean
+          data?: {
+            items: Array<{
+              id: number
+              type: string
+              title: string
+              content: string
+              level: string
+              payload: Record<string, unknown>
+              read: boolean
+              createdAt: number
+            }>
+            nextBeforeId: number
+            unreadCount: number
+            hasMore: boolean
+            hasMoreUnread: boolean
+          }
+          error?: string
+          authRequired?: boolean
+        }>
+        notificationMarkRead: (
+          id: number
+        ) => Promise<{ success: boolean; error?: string; authRequired?: boolean }>
+        notificationMarkAllRead: () => Promise<{
+          success: boolean
+          error?: string
+          authRequired?: boolean
+        }>
+        notificationArchive: (
+          id: number
+        ) => Promise<{ success: boolean; error?: string; authRequired?: boolean }>
         installPluginFromMarket: (plugin: any) => Promise<{
           success: boolean
           error?: string
@@ -699,6 +741,7 @@ declare global {
             retryStatus?: any
             lastSyncTime?: number
             lastError?: string
+            credentialsInvalidated?: boolean
             refresh?: boolean
           }) => void
         ) => () => void

@@ -10,11 +10,13 @@ import {
 } from '@/composables/useZToolsAccount'
 import { MenuRouterItemType } from '@/router'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useNotificationCenter } from '@/composables'
 import { useRoute, useRouter } from 'vue-router'
 
 const router = useRouter()
 const route = useRoute()
 const { success, error, warning, confirm } = useToast()
+const { unreadCount, unreadLabel } = useNotificationCenter()
 
 const menuRoutes = ref<MenuRouterItemType[]>([] as MenuRouterItemType[])
 const loggedIn = ref(false)
@@ -25,6 +27,7 @@ const loginVisible = ref(false)
 const loggingIn = ref(false)
 const loginUsername = ref('')
 let accountLoadVersion = 0
+let stopSyncStatusListener: (() => void) | null = null
 
 interface AccountProfileCache {
   uid: string
@@ -58,10 +61,18 @@ onMounted(() => {
   autoLoadRouter()
   void loadAccount()
   window.addEventListener(ACCOUNT_CHANGED_EVENT, handleAccountChanged)
+  stopSyncStatusListener =
+    window.ztools.internal.onSyncStatusChanged?.((payload = {}) => {
+      if (payload.credentialsInvalidated) {
+        void loadAccount()
+      }
+    }) || null
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener(ACCOUNT_CHANGED_EVENT, handleAccountChanged)
+  stopSyncStatusListener?.()
+  stopSyncStatusListener = null
 })
 
 function handleAccountChanged(): void {
@@ -188,6 +199,14 @@ function openAccount(): void {
   }
 }
 
+/**
+ * 打开设置插件内的消息中心。
+ * @returns 无返回值。
+ */
+function openNotifications(): void {
+  void router.replace({ name: 'Notifications' })
+}
+
 async function submitLogin(
   payload: { username: string; password: string; captchaVerifyParam?: string },
   controls?: { resolve: () => void; reject: (error: unknown) => void }
@@ -271,21 +290,36 @@ async function handleGithubLoginSuccess(data: {
       </div>
     </div>
 
-    <button
-      class="account-dock"
-      :class="{ active: route.name === 'Account' }"
-      type="button"
-      @click="openAccount"
+    <div
+      class="sidebar-footer"
+      :class="{ active: route.name === 'Account' || route.name === 'Notifications' }"
     >
-      <img v-if="loggedIn" class="account-avatar" :src="avatar" alt="" />
-      <div v-else class="account-avatar account-placeholder">
-        <div class="i-z-cloud" />
-      </div>
-      <div class="account-info">
-        <strong>{{ loggedIn ? displayName : '注册/登录 ZTools' }}</strong>
-        <span>{{ loggedIn ? '查看个人中心' : '同步数据与评论互动' }}</span>
-      </div>
-    </button>
+      <button
+        class="account-dock"
+        :class="{ active: route.name === 'Account' }"
+        type="button"
+        @click="openAccount"
+      >
+        <img v-if="loggedIn" class="account-avatar" :src="avatar" alt="" />
+        <div v-else class="account-avatar account-placeholder">
+          <div class="i-z-cloud" />
+        </div>
+        <div class="account-info">
+          <strong>{{ loggedIn ? displayName : '注册/登录 ZTools' }}</strong>
+          <span>{{ loggedIn ? '查看个人中心' : '同步数据与评论互动' }}</span>
+        </div>
+      </button>
+      <button
+        class="notification-dock"
+        :class="{ active: route.name === 'Notifications' }"
+        type="button"
+        title="消息中心"
+        @click="openNotifications"
+      >
+        <div class="i-z-bell" />
+        <span v-if="unreadCount > 0" class="notification-badge">{{ unreadLabel }}</span>
+      </button>
+    </div>
 
     <AccountLoginDialog
       v-model:visible="loginVisible"
@@ -347,10 +381,11 @@ async function handleGithubLoginSuccess(data: {
   grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   border: 0;
   border-radius: 8px;
-  background: var(--card-bg, var(--bg-color));
+  background: transparent;
   color: var(--text-color);
   cursor: pointer;
   padding: 10px;
@@ -358,13 +393,75 @@ async function handleGithubLoginSuccess(data: {
   transition: all 0.2s;
 }
 
-.account-dock:hover {
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px;
+  border-radius: 8px;
+}
+
+.sidebar-footer.active {
+  background: var(--active-bg);
+}
+
+.sidebar-footer:not(.active):hover {
   background: var(--hover-bg);
+}
+
+.notification-dock {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.notification-dock:hover {
+  background: transparent;
+  color: var(--text-color);
+}
+
+.notification-dock.active {
+  background: transparent;
+  color: var(--primary-color);
+}
+
+.notification-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg-color);
+  border-radius: 8px;
+  background: #ef4444;
+  color: white;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.account-dock:hover {
+  background: transparent;
   border-color: color-mix(in srgb, var(--primary-color) 35%, var(--divider-color));
 }
 
 .account-dock.active {
-  background: var(--active-bg);
+  background: transparent;
   color: var(--primary-color);
 }
 
